@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui::{Direction, Frame, Layout};
+use egui::Layout;
 use egui_tabs::Tabs;
 use std::cmp::Ordering;
 
@@ -41,49 +41,43 @@ fn main() {
 struct MyApp {}
 
 impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default()
-            .frame(Frame::none())
-            .show(ctx, |ui| {
-                Tabs::new(3)
-                    .height(32.0)
-                    .selected(1)
-                    //.hover_fg(TabColor::custom(Color32::RED)) // no hover background!
-                    .layout(Layout::centered_and_justified(Direction::TopDown))
-                    .show(ui, |ui, state| {
-                        let ind = state.index();
-                        let txt = if ind == 0 {
-                            "Tab A"
-                        } else if ind == 1 {
-                            "Tab B"
-                        } else if ind == 2 {
-                            "Tab C"
-                        } else {
-                            "Unknown"
-                        };
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        Tabs::new(3)
+            .height(32.0)
+            .selected(1)
+            .layout(Layout::left_to_right(egui::Align::Center))
+            .show(ui, |ui, state| {
+                let ind = state.index();
+                let txt = if ind == 0 {
+                    "Home"
+                } else if ind == 1 {
+                    "Settings"
+                } else if ind == 2 {
+                    "Profile"
+                } else {
+                    "Unknown"
+                };
 
-                        let hovered = if state.is_hovered() { "h" } else { "" };
-                        let selected = if state.is_selected() { "s" } else { "" };
+                let hovered = if state.is_hovered() { "h" } else { "" };
+                let selected = if state.is_selected() { "s" } else { "" };
 
-                        let txt = if !hovered.is_empty() || !selected.is_empty() {
-                            format!("{} ({}{})", txt, hovered, selected)
-                        } else {
-                            txt.into()
-                        };
+                let txt = if !hovered.is_empty() || !selected.is_empty() {
+                    format!("{} ({}{})", txt, hovered, selected)
+                } else {
+                    txt.into()
+                };
 
-                        let txt = if let Some(tab) = state.hovered_tab() {
-                            match tab.cmp(&ind) {
-                                Ordering::Equal => txt,
-                                Ordering::Greater => format!("{} ->", txt),
-                                Ordering::Less => format!("<- {}", txt),
-                            }
-                        } else {
-                            txt
-                        };
+                let txt = if let Some(tab) = state.hovered_tab() {
+                    match tab.cmp(&ind) {
+                        Ordering::Equal => txt,
+                        Ordering::Greater => format!("{} ->", txt),
+                        Ordering::Less => format!("<- {}", txt),
+                    }
+                } else {
+                    txt
+                };
 
-                        ui.add(egui::Label::new(txt).selectable(false));
-                        //ui.add(egui::Shape::Circle)
-                    });
+                ui.add(egui::Label::new(txt).selectable(false));
             });
     }
 }

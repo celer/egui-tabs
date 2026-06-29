@@ -1,4 +1,4 @@
-use egui::{vec2, Color32, CursorIcon, Layout, Sense};
+use egui::{Color32, CornerRadius, CursorIcon, Layout, Rect, Sense, Stroke, StrokeKind};
 
 pub struct Tabs {
     cols: i32,
@@ -11,6 +11,10 @@ pub struct Tabs {
     hover_bg: TabColor,
     hover_fg: TabColor,
     selected: Option<i32>,
+    /// Spacing between tabs.
+    spacing: f32,
+    /// Corner radius for tabs.
+    corner_radius: CornerRadius,
 }
 
 pub enum VisualsVariant {
@@ -119,7 +123,7 @@ impl<T> TabResponse<T> {
 
 impl Tabs {
     pub fn new(cols: i32) -> Self {
-        let height = 20.0;
+        let height = 24.0;
         let sense = Sense::click();
         let layout = Layout::default();
         let clip = false;
@@ -128,6 +132,13 @@ impl Tabs {
         let selected_bg = TabColor::visuals(VisualsVariant::SelectedBackground);
         let selected_fg = TabColor::visuals(VisualsVariant::SelectedForeground);
         let selected: Option<i32> = None;
+        let spacing = 2.0;
+        let corner_radius: CornerRadius = CornerRadius {
+            nw: 4,
+            ne: 4,
+            sw: 0,
+            se: 0,
+        };
 
         Tabs {
             cols,
@@ -140,6 +151,8 @@ impl Tabs {
             hover_bg,
             hover_fg,
             selected,
+            spacing,
+            corner_radius,
         }
     }
 
@@ -190,6 +203,18 @@ impl Tabs {
         self
     }
 
+    /// Spacing between tabs. Default is 2.0.
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing;
+        self
+    }
+
+    /// Corner radius for tabs. Default is rounded top corners only.
+    pub fn corner_radius(mut self, corner_radius: CornerRadius) -> Self {
+        self.corner_radius = corner_radius;
+        self
+    }
+
     pub fn show<F, R>(&mut self, ui: &mut egui::Ui, add_tab: F) -> TabResponse<R>
     where
         F: Fn(&mut egui::Ui, TabState) -> R,
@@ -204,105 +229,171 @@ impl Tabs {
             };
         }
 
-        let mut rect = ui.available_rect_before_wrap();
-        let cell_width = rect.width() / self.cols as f32;
-        rect.set_width(cell_width);
-        rect.set_height(self.height);
+        // Capture visuals colors upfront to avoid borrow conflicts
+        let colors = {
+            let visuals = ui.visuals();
+            (
+                visuals.extreme_bg_color,
+                visuals.window_fill(),
+                visuals.widgets.noninteractive.bg_stroke.color,
+                visuals.widgets.hovered.bg_stroke.color,
+                visuals.text_color(),
+                visuals.strong_text_color(),
+            )
+        };
+        let (
+            extreme_bg,
+            window_fill,
+            noninteractive_stroke,
+            hovered_stroke,
+            text_color_default,
+            strong_text_color,
+        ) = colors;
+
+        // Allocate tab bar area
+        let (_, tabbar_rect) =
+            ui.allocate_space(egui::vec2(ui.available_width(), self.height));
+
+        // Draw tab bar background
+        ui.painter()
+            .rect_filled(tabbar_rect, CornerRadius::ZERO, extreme_bg);
+
+        // Calculate tab dimensions
+        let total_spacing = self.spacing * (self.cols - 1) as f32;
+        let cell_width = (tabbar_rect.width() - total_spacing) / self.cols as f32;
 
         let tabs_id = ui.id().with("tabs");
         let hover_id = tabs_id.with("hover");
         let mut any_hover = false;
-
-        let mut selected: Option<i32> = self.selected;
         let mut hovered: Option<i32> = None;
+        // Restore selection from previous frame, or use initial value
+        let mut selected: Option<i32> = ui.ctx()
+            .data(|d| d.get_temp::<i32>(tabs_id))
+            .or(self.selected);
 
+        // Pre-compute colors for inactive/hovered tabs
+        let inactive_bg =
+            egui::ecolor::tint_color_towards(window_fill, extreme_bg);
+        let inactive_outline =
+            egui::ecolor::tint_color_towards(noninteractive_stroke, extreme_bg);
+
+        // Combined sense for hover + click
+        let combined_sense = Sense::click() | Sense::hover();
+
+        let mut x_offset = 0.0;
         for ind in 0..self.cols {
-            let resp = ui.allocate_rect(rect, self.sense);
+            let mut tab_rect = tabbar_rect;
+            tab_rect.set_left(tabbar_rect.left() + x_offset);
+            tab_rect.set_width(cell_width);
 
-            let selected_tab = if resp.clicked() {
+            let resp = ui.allocate_rect(tab_rect, combined_sense);
+
+            if resp.clicked() {
                 selected = Some(ind);
-                ui.ctx().data_mut(|d| d.insert_temp(tabs_id, ind));
-                ind
-            } else {
                 ui.ctx()
-                    .data(|d| d.get_temp::<i32>(tabs_id))
-                    .or(self.selected)
-                    .unwrap_or(-1)
-            };
+                    .data_mut(|d| d.insert_temp(tabs_id, ind));
+            }
 
-            let hovered_tab = if resp.hovered() {
+            if resp.hovered() {
                 any_hover = true;
                 hovered = Some(ind);
-                ui.ctx().data_mut(|d| d.insert_temp(hover_id, ind));
-                ind
-            } else {
-                ui.ctx().data(|d| d.get_temp::<i32>(hover_id)).unwrap_or(-1)
-            };
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(hover_id, ind));
+            }
+
+            let is_selected = selected == Some(ind);
+            let is_hovered = hovered == Some(ind);
 
             let tab_state = TabState {
                 ind,
-                selected_tab,
-                hovered_tab,
+                selected_tab: selected.unwrap_or(-1),
+                hovered_tab: hovered.unwrap_or(-1),
             };
 
-            if tab_state.is_selected() {
-                selected = Some(ind);
-                if let Some(c) = self.selected_bg.color(ui.visuals()) {
-                    ui.painter().rect_filled(rect, 0.0, c);
-                }
-            } else if tab_state.is_hovered() {
-                hovered = Some(ind);
-                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-                if let Some(c) = self.hover_bg.color(ui.visuals()) {
-                    ui.painter().rect_filled(rect, 0.0, c);
-                }
+            // Determine tab colors based on state
+            let (bg_fill, outline_color, text_color) = if is_selected {
+                (window_fill, noninteractive_stroke, text_color_default)
+            } else if is_hovered {
+                (inactive_bg, hovered_stroke, strong_text_color)
+            } else {
+                (inactive_bg, inactive_outline, text_color_default)
+            };
+
+            // Draw tab background
+            ui.painter()
+                .rect_filled(tab_rect, self.corner_radius, bg_fill);
+
+            // Draw outline around tab
+            let stroke_rect = rect_stroke_box(tab_rect, 1.0);
+            ui.painter().rect_stroke(
+                stroke_rect,
+                self.corner_radius,
+                Stroke::new(1.0, outline_color),
+                StrokeKind::Inside,
+            );
+
+            // For selected tab, erase bottom border to merge with content area
+            if is_selected {
+                let bottom_start =
+                    tab_rect.min.x + (self.corner_radius.sw as f32).max(1.5);
+                let bottom_end =
+                    tab_rect.max.x - (self.corner_radius.se as f32).max(1.5);
+                ui.painter().hline(
+                    bottom_start..=bottom_end,
+                    tab_rect.bottom(),
+                    Stroke::new(2.0, bg_fill),
+                );
             }
 
-            let mut child_ui =
-                ui.new_child(egui::UiBuilder::new().layout(self.layout).max_rect(rect));
+            // Draw horizontal line below inactive tabs
+            if !is_selected {
+                let px = 1.0 / ui.ctx().pixels_per_point();
+                ui.painter().hline(
+                    tab_rect.x_range(),
+                    tab_rect.bottom() - px,
+                    (px, noninteractive_stroke),
+                );
+            }
+
+            // Set cursor icon on hover
+            if is_hovered {
+                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+            }
+
+            // Create child UI for tab content
+            let mut child_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .layout(self.layout)
+                    .max_rect(tab_rect),
+            );
+            // Left padding
+            child_ui.allocate_space(egui::vec2(8.0, 0.0));
             if self.clip {
-                let margin = egui::Vec2::splat(ui.visuals().clip_rect_margin);
-                let margin = margin.min(0.5 * ui.spacing().item_spacing);
-                let clip_rect = rect.expand2(margin);
+                let margin =
+                    egui::Vec2::splat(ui.visuals().clip_rect_margin);
+                let margin =
+                    margin.min(0.5 * ui.spacing().item_spacing);
+                let clip_rect = tab_rect.expand2(margin);
                 child_ui.set_clip_rect(clip_rect.intersect(child_ui.clip_rect()));
             }
 
-            // set foreground colors if we have them
-            if tab_state.is_selected() {
-                if let Some(c) = self.selected_fg.color(ui.visuals()) {
-                    child_ui.style_mut().visuals.override_text_color = Some(c);
-                }
-            } else if tab_state.is_hovered() {
-                if let Some(c) = self.hover_fg.color(ui.visuals()) {
-                    child_ui.style_mut().visuals.override_text_color = Some(c);
-                }
-            }
+            // Override text color based on state
+            child_ui.style_mut().visuals.override_text_color =
+                Some(text_color);
 
             let user_value = add_tab(&mut child_ui, tab_state);
-            /*
-            let child_rect = child_ui.min_rect();
-            let resp = child_ui.interact(child_rect, child_ui.id(), self.sense);
-
-            if resp.hovered() {
-                ui.painter()
-                    .rect_filled(child_rect, 0.0, egui::Color32::RED);
-                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-                hovered = Some(ind);
-                any_hover = true;
-            }
-
-            if resp.clicked() {
-                ui.painter()
-                    .rect_filled(child_rect, 0.0, egui::Color32::BLUE);
-                selected = Some(ind);
-                ui.ctx().data_mut(|d| d.insert_temp(tabs_id, ind));
-            }
-            */
-
             inner.push(egui::InnerResponse::new(user_value, resp));
 
-            rect = rect.translate(vec2(cell_width, 0.0))
+            x_offset += cell_width + self.spacing;
         }
+
+        // Draw bottom separator line
+        let px = 1.0 / ui.ctx().pixels_per_point();
+        ui.painter().hline(
+            tabbar_rect.left()..=tabbar_rect.right(),
+            tabbar_rect.bottom() - px,
+            (px, noninteractive_stroke),
+        );
 
         if !any_hover {
             ui.data_mut(|data| data.remove::<i32>(hover_id));
@@ -315,4 +406,9 @@ impl Tabs {
             inner,
         }
     }
+}
+
+/// Shrink a rectangle uniformly from all sides to make room for a stroke.
+fn rect_stroke_box(rect: Rect, stroke_width: f32) -> Rect {
+    rect.expand(-f32::ceil(stroke_width / 2.0))
 }
